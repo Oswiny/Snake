@@ -1,0 +1,715 @@
+<html>
+<style type="text/css">
+    @font-face {
+        font-family: 'Jersey10';
+        src: url("Jersey10-Regular.ttf");
+    }
+
+    body {
+        background-color: #04151f;
+        margin: 0;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        height: 100vh;
+    }
+
+    #cID {
+        border: 2px solid #f4fff8;
+    }
+
+    #canvasContainer {
+        display: flex;
+        justify-content: center;
+        align-items: center;
+
+        position: relative;
+    }
+
+    .textClass {
+        font-family: "Jersey10";
+        font-size: 30px;
+        color: #f4fff8;
+        position: absolute;
+        bottom: -30px;
+        left: 0;
+    }
+
+    .textClassTop {
+        user-select: none;
+        font-size: 70px;
+        font-family: "Jersey10";
+        letter-spacing: 115px;
+        width: 100%;
+        color: #f4fff8;
+        position: absolute;
+        bottom: 400px;
+        left: 0;
+    }
+
+    #powerUpText {
+        left: 50%;
+        display: flex;
+        justify-content: flex-end;
+        align-items: center;
+        font-size: 30px;
+        width: 50%;
+    }
+
+    #scoreText {
+        bottom: -60px;
+    }
+
+    #scoreNumberText {
+        bottom: -60px;
+        left: 50%;
+        display: flex;
+        justify-content: flex-end;
+        align-items: center;
+        font-size: 30px;
+        width: 50%;
+    }
+
+    #retry {
+        font-size: 100px;
+        left: 8%;
+        bottom: 50%;
+        background-color: transparent;
+        background-repeat: no-repeat;
+        border: none;
+        cursor: pointer;
+        overflow: hidden;
+        outline: none;
+        display: none;
+    }
+
+    #win {
+        font-size: 100px;
+        left: 24%;
+        bottom: 70%;
+        background-color: transparent;
+        background-repeat: no-repeat;
+        border: none;
+        cursor: pointer;
+        overflow: hidden;
+        outline: none;
+        display: none;
+    }
+
+    img {
+        display: none;
+    }
+</style>
+
+<img id="foodPicture" src="foodPicture.png">
+<img id="powerUpPicture" src="powerUpPicture.png">
+<img id="snakeBody" src="snakeBody.png">
+<img id="snakeHeadLeft" src="snakeHeadLeft.png">
+<img id="snakeHeadRight" src="snakeHeadRight.png">
+<img id="snakeHeadUp" src="snakeHeadUp.png">
+<img id="snakeHeadDown" src="snakeHeadDown.png">
+
+
+<body>
+    <div id="canvasContainer">
+        <a class="textClassTop">SNAKE</a>
+        <canvas id="cID" width="600" height="400"></canvas>
+        <a class="textClass">CURRENTLY ACTIVE POWER UP: </a>
+        <a class="textClass" id="powerUpText">-</a>
+        <a class="textClass" id="scoreText">SCORE: </a>
+        <a class="textClass" id="scoreNumberText">0</a>
+        <button class="textClass" id="retry" onclick="Game.reload()">CLICK TO RETRY</button>
+        <button class="textClass" id="win" onclick="Game.reload()">YOU WON</button>
+    </div>
+</body>
+
+
+<script type="text/javascript">
+    let canvas = document.getElementById("cID");
+    let context = canvas.getContext("2d");
+
+    class Assets {
+        //creates and loads audio
+        static createAudio(source) {
+            const temp = new Audio(source)
+            temp.preload = "auto";
+            temp.load();
+            return temp;
+        }
+
+        static food = {
+            sound: Assets.createAudio("foodSound.mp3"),
+            image: document.getElementById("foodPicture")
+        }
+
+        static powerUp = {
+            sound: Assets.createAudio("powerUpSound.mp3"),
+            image: document.getElementById("powerUpPicture"),
+            text: document.getElementById("powerUpText"),
+            updateText: () => {
+                let timeLeft = Math.round((Eatable.currentlyActivePowerUp.duration - (new Date() - Eatable.currentlyActivePowerUp.activatedAt)) / 1000);
+                if (timeLeft >= 0) {
+                    Assets.powerUp.text.innerText = Eatable.currentlyActivePowerUp.type + " - " + timeLeft;
+                }
+            }
+        }
+
+
+
+        static theme = {
+            isAKeyPressed: false, //turns true when any key is pressed
+            isAlreadyStarted: false, //turns false when audio starts playing (makes sure we don't play same audio over and over again)
+            sound: Assets.createAudio("themeSound.mp3"),
+            playSound: () => { //the reason why we don't play it directly is because of browser blocking audio play without a user interaction
+                if (!Assets.theme.isAlreadyStarted && Assets.theme.isAKeyPressed) {
+                    Assets.theme.sound.play(); //actually plays the audio
+                    Assets.theme.sound.loop = true; //loops the audio
+                    Assets.theme.isAlreadyStarted = true;
+                }
+            }
+        }
+
+        static death = {
+            sound: Assets.createAudio("deathSound.wav"),
+            text: document.getElementById("retry")
+        }
+
+        static win = {
+            sound: Assets.createAudio("winSound.mp3"),
+            text: document.getElementById("win")
+        }
+
+        static snake = {
+            sound: Assets.createAudio("directionChangeSound.wav"),
+            //different images are used for different rotations
+            head: {
+                up: {
+                    image: document.getElementById("snakeHeadUp")
+                },
+                down: {
+                    image: document.getElementById("snakeHeadDown")
+                },
+                left: {
+                    image: document.getElementById("snakeHeadLeft")
+                },
+                right: {
+                    image: document.getElementById("snakeHeadRight")
+                }
+            },
+            body: {
+                image: document.getElementById("snakeBody")
+            }
+
+        }
+
+        static score = {
+            text: document.getElementById("scoreNumberText"),
+            updateText: () => {
+                Assets.score.text.innerText = Eatable.totalEaten.food;
+            }
+        }
+
+    }
+
+    class Random {
+        static getInt(maxIncluded) { //returns a random integer between 0-maxIncluded
+            return Math.floor(Math.random() * (maxIncluded + 1))
+        }
+
+        static getEmptyPosWithinCanvas(heightOfObject, widthOfObject) { //returns a empty position located within canvas
+            let randX = Random.getInt(canvas.width - widthOfObject);
+            let randY = Random.getInt(canvas.height - heightOfObject);
+
+            let fittedPos = Position.fitToGrid(new Position(randX, randY)); //aligns random position with our grid
+            if (Position.checkCollisionWithArray(fittedPos, heightOfObject, widthOfObject, snake.body.concat(Eatable.getPositions(Eatable.list)), Game.gridSize)) { //checks if that position is empty
+                fittedPos = Random.getEmptyPosWithinCanvas(heightOfObject, widthOfObject); //if position is not empty function runs again until it gets a empty position
+            }
+            return fittedPos
+        }
+
+        static getColor() { //gets a random color
+            const letters = '0123456789ABCDEF';
+            let color = '#';
+            for (let i = 0; i < 6; i++) {
+                color += letters[Math.floor(Math.random() * 16)];
+            }
+            return color;
+        }
+    }
+
+
+    class Game {
+        static gridSize = 40;
+        static frameCount = 0;
+        static defaultRequiredFrameCount = 0.3;
+        static requiredFrameCount = Game.defaultRequiredFrameCount; //frameCount needs to be equal to requiredFrameCount in order to draw a new frame (can be changed to speed up or slow down game)
+        static defaultSpawnLength = 3;
+        static clearScreen() {
+            context.clearRect(0, 0, canvas.width, canvas.height);
+        }
+        static reload() {
+            location.reload(); //reloads the page used to restart the game on death
+        }
+        static checkDeath() { // (snake.body.length <= 0) -> player also dies if snake's length reaches 0 with ReverseFood power up, also used when player wins
+            if (!snake.isDead && (snake.body.length <= 0 || !Position.isInCanvasArea(snake.body[0], Game.gridSize, Game.gridSize) || Position.checkSelfCollision(snake.body))) {
+                Assets.theme.sound.pause();
+                Assets.theme.sound.currentTime = 0;
+                Assets.death.sound.cloneNode().play();
+                snake.isDead = true;
+
+                if (Eatable.totalEaten.food >= ((canvas.width / Game.gridSize) * (canvas.height / Game.gridSize))) { //checks if snake filled every available grid
+                    Assets.win.text.style.display = "block"; //displays you won text
+                    Assets.win.sound.cloneNode().play();  //plays win sound
+                }
+
+                Assets.death.text.style.display = "block";
+            }
+        }
+        static keyDownHandler(e) { //handles user input
+            if (!snake.isDead) {
+                if (e.key.toUpperCase() == Controls.current.up) {
+                    snake.directionChangeRequest("up")
+                }
+                else if (e.key.toUpperCase() == Controls.current.left) {
+                    snake.directionChangeRequest("left")
+                }
+                else if (e.key.toUpperCase() == Controls.current.down) {
+                    snake.directionChangeRequest("down")
+                }
+                else if (e.key.toUpperCase() == Controls.current.right) {
+                    snake.directionChangeRequest("right")
+                }
+            }
+
+            Assets.theme.isAKeyPressed = true;
+        }
+
+        static defaultCheckerboardColors = ["#093148", "#072536"];
+        static checkerboardColors = Game.defaultCheckerboardColors;
+        static drawCheckerboard() {
+            context.fillStyle = Game.checkerboardColors[0];
+            context.fillRect(0, 0, canvas.width, canvas.height);
+            context.fillStyle = Game.checkerboardColors[1];
+            for (let i = 0; i < canvas.width / Game.gridSize; i++) {
+                for (let j = 0; j < canvas.height / Game.gridSize; j++) {
+                    if ((i + j) % 2 != 0) {
+                        context.fillRect(i * Game.gridSize, j * Game.gridSize, Game.gridSize, Game.gridSize);
+                    }
+                }
+            }
+        }
+
+        static previousFrame = 0
+        static deltaTime() { //calculates the time between each requestAnimationFrame calls (used to get same frame rate at different players)
+            if (Game.previousFrame == 0) {
+                Game.previousFrame = new Date();
+            }
+            else {
+                let currentFrame = new Date();
+                let dTime = currentFrame - Game.previousFrame;
+                Game.previousFrame = new Date;
+                return dTime / 1000;
+            }
+            return 1;
+        }
+    }
+
+    class Controls {
+        static defaultUp = "W";
+        static defaultDown = "S";
+        static defaultLeft = "A";
+        static defaultRight = "D";
+        static defaultKeyList = [Controls.defaultUp, Controls.defaultDown, Controls.defaultLeft, Controls.defaultRight];
+
+
+        static currentUp = Controls.defaultUp;
+        static currentDown = Controls.defaultDown;
+        static currentLeft = Controls.defaultLeft;
+        static currentRight = Controls.defaultRight;
+        static current = {
+            up: Controls.defaultUp,
+            down: Controls.defaultDown,
+            left: Controls.defaultLeft,
+            right: Controls.defaultRight
+        }
+
+    }
+
+    class Position {
+        constructor(x, y) {
+            this.x = x;
+            this.y = y;
+        }
+
+        static add(pos1, pos2) { //adds two positions
+            return new Position(pos1.x + pos2.x, pos1.y + pos2.y)
+        }
+
+        static compare(pos1, pos2) { //checks if two positions are equal
+            return pos1.x == pos2.x && pos1.y == pos2.y
+        }
+
+        static checkCollision(pos1, widthOfPos1, heightOfPos1, pos2, widthOfPos2, heightOfPos2) { //checks collision of two boxes
+            if (pos1.x < pos2.x + widthOfPos2 && pos1.x + widthOfPos1 > pos2.x && pos1.y < pos2.y + heightOfPos2 && pos1.y + heightOfPos1 > pos2.y) {
+                return true
+            }
+            return false
+        }
+
+        static fitToGrid(pos) { //aligns any given pos to grid
+            let xPos = Math.round(pos.x / Game.gridSize) * Game.gridSize
+            let yPos = Math.round(pos.y / Game.gridSize) * Game.gridSize
+
+            if (xPos > canvas.width) { // makes sure we didn't get a pos thats bigger than our canvas width after rounding
+                xPos = Math.floor(pos.x / Game.gridSize) * Game.gridSize
+            }
+            else if (xPos < 0) { // makes sure we didn't get a pos that is smaller than start of canvas after rounding
+                xPos = Math.ceil(pos.x / Game.gridSize) * Game.gridSize
+            }
+
+            if (yPos > canvas.height) { // makes sure we didn't get a pos thats bigger than our canvas height after rounding
+                yPos = Math.floor(pos.y / Game.gridSize) * Game.gridSize
+            }
+            else if (yPos < 0) { // makes sure we didn't get a pos thats smaller than start of canvas after rounding
+                yPos = Math.ceil(pos.y / Game.gridSize) * Game.gridSize
+            }
+
+            return new Position(xPos, yPos)
+        }
+
+        static checkCollisionWithArray(pos, widthOfObject, heightOfObject, array, sizeOfEachElement) { //checks collision using array
+            for (let i = 0; i < array.length; i++) {
+                if (Position.checkCollision(pos, widthOfObject, heightOfObject, array[i], sizeOfEachElement, sizeOfEachElement)) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+
+        static checkSelfCollision(array) { //checks if start element in array is in collision with other elements
+            for (let i = 1; i < array.length; i++) {
+                if (Position.compare(array[i], array[0])) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        static isInCanvasArea(pos, widthOfObject, heightOfObject) { //checks if a box is inside of canvas
+            if (pos.x < 0 || pos.y + heightOfObject > canvas.height || pos.y < 0 || pos.x + widthOfObject > canvas.width) {
+                return false;
+            }
+            return true;
+        }
+    }
+
+
+
+    class Eatable {
+
+        static getPositions(array) { //gets entry "pos" values for all elements in given array
+            return array.map(item => item.pos);
+        }
+
+        static totalEaten = {
+            food: Game.defaultSpawnLength,
+            powerUp: 0
+        }
+
+        static list = [] //used to store all Eatables
+        static powerUpTypes = ["2xGrowth", "2xFood", "NoEffect", "ReverseFood", "RandomControls", "2xFaster", "2xSlower", "ColorParty"] //All power up types that we have
+        static currentlyActivePowerUpIndex = -1;
+        static currentlyActivePowerUp = {
+            type: "",
+            index: -1,
+            activatedAt: null,
+            duration: 0
+        }
+
+        static clearCurrentActivePowerUp() { //clears currently active power up
+            Eatable.currentlyActivePowerUp.type = ""
+            Eatable.currentlyActivePowerUp.index = -1
+            Eatable.currentlyActivePowerUp.activatedAt = null
+            Eatable.currentlyActivePowerUp.duration = 0
+            Assets.powerUp.text.innerText = "-";
+        }
+
+        static setAllEffectsToNormal() { // resets all effects that are changed by power ups
+            requiredGrowthCount = 1;
+            Eatable.minFoodOnMap = 1;
+            Object.keys(Controls.current).forEach((key, index) => {
+                Controls.current[key] = Controls.defaultKeyList[index];
+            });
+            Game.requiredFrameCount = Game.defaultRequiredFrameCount;
+            Game.checkerboardColors = Game.defaultCheckerboardColors;
+        }
+
+        constructor(pos, image, type) {
+            this.pos = pos
+            this.image = image
+            this.type = type
+            this.isDrawn = true;
+            if (this.type == "food") {
+                Eatable.amountOfFood++;
+            }
+        }
+
+        static drawAll() {
+            for (let i = 0; i < Eatable.list.length; i++) {
+                if (!Eatable.list[i].isDrawn) { //doesn't draw the element if isDrawn is false
+                    continue
+                }
+                context.drawImage(Eatable.list[i].image, Eatable.list[i].pos.x, Eatable.list[i].pos.y, Eatable.list[i].image.width, Eatable.list[i].image.height)
+            }
+        }
+
+
+        static checkCollision() { //checks collision for eatables and snake
+            if (snake.body.length > 0) {
+                for (let i = 0; i < Eatable.list.length; i++) {
+                    if (Position.checkCollision(Eatable.list[i].pos, Eatable.list[i].image.width, Eatable.list[i].image.height, snake.body[0], Game.gridSize, Game.gridSize)) {
+                        snake.lastEatenIndex = i
+                        break;
+                    }
+                }
+            }
+        }
+
+        static amountOfFood = 0; //amount of food currently on map
+        static minFoodOnMap = 1; //minimum amount of food thats allowed to be on canvas
+        static powerUpSpawnIncrement = 5; //snake needs to at least eat this amount of food to spawn power up box
+        static powerUpSpawnGoal = Eatable.powerUpSpawnIncrement + Game.defaultSpawnLength; // the amount in which power up will be spawned when reached
+        static lastSpawnedPowerUpAt = 0 //stores the total eaten food at last power up spawn
+        static isACurrentPowerUpSpawnedAndNotActive = false; // shows if a power up is spawned but not eaten/activated
+        static spawn() { //spawns food and power up
+            if (Eatable.amountOfFood < Eatable.minFoodOnMap) { //if current amount of food in map less than minimum allowed food on map spawns new food
+                Eatable.list.push(new Eatable(Random.getEmptyPosWithinCanvas(Assets.food.image.width, Assets.food.image.height), Assets.food.image, "food"))
+            }
+
+            // (Eatable.totalEaten.food >= Eatable.powerUpSpawnGoal) -> checks if we reached/passed power up spawn goal
+            // !Eatable.isACurrentPowerUpSpawnedAndNotActive -> makes sure we don't spawn power up if there is already one
+            // !Position.checkCollisionWithArray(...) -> makes sure position in which we spawn power up is empty
+            if (Eatable.totalEaten.food >= Eatable.powerUpSpawnGoal && !Eatable.isACurrentPowerUpSpawnedAndNotActive && !Position.checkCollisionWithArray(Position.fitToGrid(new Position(canvas.width / 2, canvas.height / 2)), Assets.powerUp.image.width, Assets.powerUp.image.height, snake.body.concat(Eatable.getPositions(Eatable.list)), Game.gridSize)) {
+                Eatable.list.push(new Eatable(Position.fitToGrid(new Position(canvas.width / 2, canvas.height / 2)), Assets.powerUp.image, "powerUp"))
+                Eatable.isACurrentPowerUpSpawnedAndNotActive = true;
+            }
+        }
+
+        static noClearScreen = false;
+        static isPowerUpActive = false;
+        static activatePowerUp() { //activates a power up
+            if (Eatable.currentlyActivePowerUp != null && Eatable.currentlyActivePowerUp.type != "") {
+                if (Eatable.currentlyActivePowerUp.type == "2xGrowth" && !Eatable.isPowerUpActive) {
+                    requiredGrowthCount = 2; //makes each food grow 2 sizes rather than 1
+                    Eatable.isPowerUpActive = true;
+                } else if (Eatable.currentlyActivePowerUp.type == "2xFood" && !Eatable.isPowerUpActive) {
+                    Eatable.minFoodOnMap = 2; //makes minimum allowed food on canvas 2
+                    Eatable.isPowerUpActive = true;
+                } else if (Eatable.currentlyActivePowerUp.type == "NoEffect" && !Eatable.isPowerUpActive) {
+                    Eatable.isPowerUpActive = true; //nothing
+                } else if (Eatable.currentlyActivePowerUp.type == "ReverseFood" && !Eatable.isPowerUpActive) {
+                    requiredGrowthCount = -1;
+                    Eatable.isPowerUpActive = true;
+                } else if (Eatable.currentlyActivePowerUp.type == "RandomControls" && !Eatable.isPowerUpActive) {
+                    let newControls = [...Controls.defaultKeyList]; //clones default key list
+                    for (let i = Controls.defaultKeyList.length - 1; i > 0; i--) {
+                        let index = Random.getInt(i);
+                        [newControls[i], newControls[index]] = [newControls[index], newControls[i]]; //shuffles array
+                    }
+
+                    Object.keys(Controls.current).forEach((key, i) => {
+                        Controls.current[key] = newControls[i];
+                    });
+                    Eatable.isPowerUpActive = true;
+                } else if (Eatable.currentlyActivePowerUp.type == "2xFaster" && !Eatable.isPowerUpActive) {
+                    Game.requiredFrameCount = Game.defaultRequiredFrameCount / 2;
+                } else if (Eatable.currentlyActivePowerUp.type == "2xSlower" && !Eatable.isPowerUpActive) {
+                    Game.requiredFrameCount = Game.defaultRequiredFrameCount * 2;
+                } else if (Eatable.currentlyActivePowerUp.type == "ColorParty") {
+                    Game.checkerboardColors = [Random.getColor(), Random.getColor()];
+                }
+
+                Assets.powerUp.updateText(); //adjusts power up text
+                if ((new Date() - Eatable.currentlyActivePowerUp.activatedAt) >= Eatable.currentlyActivePowerUp.duration) { //checks if duration is over
+                    Eatable.isPowerUpActive = false;
+                    Eatable.setAllEffectsToNormal(); //clears effects
+                    Eatable.clearCurrentActivePowerUp(); //clears power up
+                }
+            }
+        }
+
+        static setActivePowerUp(index) { //can be used to test power ups. Eatable.setActivePowerUp(index) in console
+            Eatable.currentlyActivePowerUp.index = index;
+            Eatable.currentlyActivePowerUp.type = Eatable.powerUpTypes[Eatable.currentlyActivePowerUp.index];
+            Eatable.currentlyActivePowerUp.duration = 10000;
+            Eatable.currentlyActivePowerUp.activatedAt = new Date();
+            snake.lastEatenIndex = null
+        }
+    }
+
+
+
+    let snake = {
+        body: [],//stores positions of snake head and body
+        direction: "left", //the direction that snake is moving currently
+        changedDirectionWithinFrame: false, //makes sure player is not able to change direction more than once within same frame
+        directionChangeRequest: (newDirection) => { //controls direction change requests made by player
+            if (!snake.changedDirectionWithinFrame) {
+                if (newDirection == "left" && snake.direction != "right") { // if player wants to go left makes sure we are not going right now
+                    snake.direction = "left"
+                    snake.changedDirectionWithinFrame = true;
+                    Assets.snake.sound.cloneNode().play(); //plays the sound for direction change
+                }
+                else if (newDirection == "right" && snake.direction != "left") { // if player wants to go right makes sure we are not going left now
+                    snake.direction = "right"
+                    snake.changedDirectionWithinFrame = true;
+                    Assets.snake.sound.cloneNode().play(); //plays the sound for direction change
+                }
+                else if (newDirection == "up" && snake.direction != "down") { // if player wants to go up makes sure we are not going down now
+                    snake.direction = "up"
+                    snake.changedDirectionWithinFrame = true;
+                    Assets.snake.sound.cloneNode().play(); //plays the sound for direction change
+                }
+                else if (newDirection == "down" && snake.direction != "up") { // if player wants to go down makes sure we are not going up now
+                    snake.direction = "down"
+                    snake.changedDirectionWithinFrame = true;
+                    Assets.snake.sound.cloneNode().play(); //plays the sound for direction change
+                }
+
+            }
+
+        },
+        move: () => {
+            if (snake.direction == "left") {
+                snake.shiftBody(snake.body[0])
+                snake.body[0].x -= Game.gridSize; //moves snake head 1 grid in the given direction
+            }
+            else if (snake.direction == "right") {
+                snake.shiftBody(snake.body[0])
+                snake.body[0].x += Game.gridSize; //moves snake head 1 grid in the given direction
+            }
+            else if (snake.direction == "up") {
+                snake.shiftBody(snake.body[0])
+                snake.body[0].y -= Game.gridSize; //moves snake head 1 grid in the given direction
+            }
+            else if (snake.direction == "down") {
+                snake.shiftBody(snake.body[0]);
+                snake.body[0].y += Game.gridSize; //moves snake head 1 grid in the given direction
+            }
+        },
+        shiftBody: (oldHeadPos) => { //pulls everything towards snake head (starting from last index in snake.body changes each with coordinates of previous indexed)
+            for (let i = snake.body.length - 1; i - 1 >= 0; i--) {
+                if (i - 1 == 0) {
+                    snake.body[i].x = oldHeadPos.x;
+                    snake.body[i].y = oldHeadPos.y
+                }
+                else {
+                    snake.body[i].x = snake.body[i - 1].x;
+                    snake.body[i].y = snake.body[i - 1].y;
+                }
+            }
+        },
+        draw: () => { //draws the snake
+            for (let i = 0; i < snake.body.length; i++) {
+                if (i == 0) { //draws head
+                    context.drawImage(Assets.snake.head[snake.direction].image, snake.body[i].x, snake.body[i].y);
+                }
+                else { //draws body
+                    context.drawImage(Assets.snake.body.image, snake.body[i].x, snake.body[i].y)
+                }
+            }
+        },
+        lastEatenIndex: null, //stores the index position of last eaten thing in Eatable.list
+        defaultSpawn: () => { //spawns snake for start of game in middle
+            for (let i = 1; i <= Game.defaultSpawnLength; i++) {
+                snake.body.push(new Position(canvas.width / 2 + Game.gridSize / 2 * (2 * i - 1), canvas.height / 2))
+            }
+        }
+    }
+
+    document.addEventListener("keydown", Game.keyDownHandler)
+    snake.defaultSpawn();
+    let lastPart;
+    let growthCount = 0
+    let requiredGrowthCount = 1;
+    let firstFramePassed = false;
+    let updateGame = () => {
+        Assets.theme.playSound();
+        if (Game.frameCount >= Game.requiredFrameCount) { //checks if new frame should be drawn
+            if (!snake.isDead) { //makes sure snake is not dead
+
+                if (snake.lastEatenIndex != null) { //checks if snake has eaten anything
+                    if (Eatable.list[snake.lastEatenIndex].type == "food") { //if snake has eaten food
+                        lastPart = new Position(snake.body[snake.body.length - 1].x, snake.body[snake.body.length - 1].y); //holds the last part of snake.body to add length the
+                    }
+                }
+                snake.move(); //moves the snake
+                if (snake.lastEatenIndex != null) { //checks if snake has eaten anything
+                    if (Eatable.list[snake.lastEatenIndex].type == "food") {
+                        if (requiredGrowthCount >= 0) { //if requiredGrowthCount is positive add to snake length otherwise decrease it (when ReverseFood is active "else" runs)
+                            snake.body.push(lastPart);
+                            Eatable.totalEaten.food++;
+                        }
+                        else {
+                            snake.body.splice(snake.body.length - 1, 1);
+                            Eatable.totalEaten.food--;
+                        }
+                        Eatable.list[snake.lastEatenIndex].isDrawn = false; // do not draw eaten food anymore
+                        Assets.food.sound.cloneNode().play(); // play food eaten sound effect
+                        growthCount++; // increase growth count
+                        if (growthCount == Math.abs(requiredGrowthCount)) { //check if we have enough growth count absolute value is taken because when ReverseFood is active requiredGrowthCount is negative
+                            growthCount = 0; //resets
+                            Eatable.amountOfFood--; //decreases amount of food in map
+                            Eatable.list.splice(snake.lastEatenIndex, 1) //removes the eaten food from Eatable.list
+                            snake.lastEatenIndex = null; //sets last eaten to null
+                        }
+                    }
+                    else if (Eatable.list[snake.lastEatenIndex].type == "powerUp") {
+                        Eatable.totalEaten.powerUp++;
+                        if (Eatable.currentlyActivePowerUp.type == "") { //if a power up is not currently active get a random power up if its active same power up will be reactivated
+                            Eatable.currentlyActivePowerUp.index = Random.getInt(Eatable.powerUpTypes.length - 1);
+                            Eatable.currentlyActivePowerUp.type = Eatable.powerUpTypes[Eatable.currentlyActivePowerUp.index];
+                        }
+
+                        Eatable.list.splice(snake.lastEatenIndex, 1); //remove the power up box from Eatable.list
+                        Eatable.currentlyActivePowerUp.activatedAt = new Date();
+                        Eatable.currentlyActivePowerUp.duration = 10000;
+
+                        if (Eatable.isACurrentPowerUpSpawnedAndNotActive) {
+                            while (true) {
+                                Eatable.powerUpSpawnGoal += Eatable.powerUpSpawnIncrement; //increases power up spawn goal until powerUpSpawnGoal is bigger than totalEaten.food
+                                if (Eatable.powerUpSpawnGoal > Eatable.totalEaten.food) {
+                                    break;
+                                }
+                            }
+                            Eatable.isACurrentPowerUpSpawnedAndNotActive = false;
+                        }
+                        Assets.powerUp.sound.cloneNode().play(); //play power up eaten sound
+                        snake.lastEatenIndex = null //set last eaten to null
+                    }
+                }
+
+                Eatable.activatePowerUp(); //activate power up
+                Eatable.spawn(); //spawn food and power up
+                Eatable.checkCollision(); //check if any food and power up is eaten
+                Game.frameCount = 0; //reset frameCount
+                snake.changedDirectionWithinFrame = false; //resets since we ended a frame
+            }
+            Assets.score.updateText(); //updates score
+            Game.checkDeath(); //checks if snake is dead
+            Game.clearScreen(); //clears screen
+            Game.drawCheckerboard(); //draws checkerboard
+            snake.draw(); //draws snake
+            Eatable.drawAll(); //draws all eatables
+        }
+        Game.frameCount += 1 * Game.deltaTime();
+        requestAnimationFrame(updateGame);
+    }
+
+    requestAnimationFrame(updateGame);
+</script>
+
+
+
+</html>
